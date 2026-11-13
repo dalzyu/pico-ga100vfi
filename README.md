@@ -47,12 +47,18 @@ MP2888B voltage controller, timed off the `PEX_RST` release edge.
 
 | Connection | Required? | Status | Purpose |
 |---|---|---|---|
+| `GND` | **yes** | **connected** | common ground between Pico and GPU PCB (required reference for I2C, `PEX_RST`, and ADC) |
 | I2C SDA + SCL (`GP0` / `GP1`) | **yes** | **connected** | PMBus to the MP2888B NVVDD controller (`VOUT_COMMAND`, `E1` mode, `VOUT_MIN`) |
 | `PEX_RST` (`GP22`) | **yes** | **connected** | fundamental reset (`PEX_RST_BUF*`); its release edge is `t = 0` |
 | NVVDD sense → ADC2 (`GP42`) | no | optional | rail trace (`y`) and `nvvdd` average in `glitch done` (diagnostic only) |
 
-The minimal rig is just **GND, I2C (`GP0`/`GP1`), and `PEX_RST` (`GP22`)**. Adding
-`GP42` gives you the high-rate NVVDD trace for tuning.
+The minimal rig is **GND, I2C (`GP0`/`GP1`), and `PEX_RST` (`GP22`)**. Adding `GP42`
+gives you the high-rate NVVDD trace for tuning.
+
+A direct **common ground** wire between the Pico and the GPU PCB is mandatory — do
+not rely on USB shield / motherboard PCIe ground alone. Without a tight ground
+return, 1 MHz I2C edges, `PEX_RST` V_IL, and millivolt-level ADC readings suffer
+ground-bounce and offset errors.
 
 ![Wiring block diagram: GP0 to I2CC_SDA, GP1 to I2CC_SCL, GP22 to PEX_RST_BUF*, and optional GP42 to NVVDD](docs/images/wiring-diagram.jpg)
 
@@ -91,6 +97,24 @@ The glitch sequence itself is identical either way — actuation never reads the
 
 `firmware/board.h` holds the pin map and validates family, ADC, and hardware I2C
 pin choices at compile time.
+
+### 400 MHz overclock & ADC clock
+
+`pwmvid` overclocks the RP2350 system clock to **400 MHz** (`TARGET_KHZ = 400000`
+in [`firmware/pwmvid.c`](firmware/pwmvid.c)):
+
+- **Core voltage & flash timing:** disables the VREG voltage limit, raises core
+  voltage to **1.50 V** (`VREG_VOLTAGE_1_50`), and scales the QMI XIP flash
+  divider (`clk_sys / 8` → `50 MHz` max, capped into `[4..8]`) before switching
+  the PLL. If a chip cannot synthesize 400 MHz, it falls back to boot clock.
+- **ADC sample rate:** on RP2350 `clk_adc` defaults to 48 MHz and does not track
+  `clk_sys`. With `-DNVVDD_ADC`, `pwmvid` reparents `clk_adc` onto `PLL_SYS`
+  (400 MHz) so the 96-cycle SAR conversion speeds up from `2.0 µs` to
+  **`240 ns/sample` (~4.17 MSa/s)** — high enough to resolve ~150–200 µs NVVDD
+  dips cleanly.
+- **`detect` stays at stock clocks:** `firmware/detect.c` does not touch VREG,
+  PLL, or QMI so you can debug I2C wiring even on a board that won't take the
+  400 MHz OC.
 
 ### Customizing pin definitions
 
