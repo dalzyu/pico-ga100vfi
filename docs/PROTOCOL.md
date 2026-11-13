@@ -86,7 +86,6 @@ is the captured-rail average and is **omitted** in a build without `-DNVVDD_ADC`
 
 - `PEX_RST` is only ever driven **low**, then released to high-Z (the net is 1.8 V
   push-pull; driving it high would put 3.3 V on it).
-- `PS_VMON_PGOOD` (GP2) is **not connected** and the firmware never configures it.
 - After the dip the firmware restores `VOUT_COMMAND` to the stock code and hands the
   rail back to PWM-VID mode, so an interrupted run cannot leave NVVDD low.
 - The NVVDD ADC is read-only and never gates actuation, so the sense wire (GP42) is
