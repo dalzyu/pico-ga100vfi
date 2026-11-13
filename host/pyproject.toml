@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ga100vfi"
+version = "0.1.0"
+description = "RP2350 I2C voltage fault injection host client for GA100"
+requires-python = ">=3.10"
+dependencies = ["pyserial>=3.5"]
+
+[project.scripts]
+ga100vfi = "ga100vfi.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

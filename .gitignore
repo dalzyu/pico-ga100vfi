@@ -1,0 +1,14 @@
+# build outputs
+build/
+build-*/
+*.uf2
+*.elf
+*.hex
+*.bin
+*.map
+*.dis
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.venv/
