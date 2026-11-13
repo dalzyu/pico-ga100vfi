@@ -198,7 +198,6 @@ u                                        # unlock + config-id 0x1229 (stops devi
 g 354 -60 750 -20 0 1 0 3 198 150 117 0   # shallow triple pulse (revert=0 for fast campaign)
 ```
 
-*(Pre-FF CMP 170HX reference: `g 325 -180 650 -20 0 1 0 3 40 40`.)*
 
 **Note:** This glitch has only been tested on a single card. Silicon, VRM, and
 board-to-board variation means other cards may need fine-tuning (`--v-dip`,
