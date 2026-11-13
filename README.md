@@ -105,7 +105,7 @@ in [`firmware/pwmvid.c`](firmware/pwmvid.c)):
 
 - **Core voltage & flash timing:** disables the VREG voltage limit, raises core
   voltage to **1.50 V** (`VREG_VOLTAGE_1_50`), and scales the QMI XIP flash
-  divider (`clk_sys / 8` → `50 MHz` max, capped into `[4..8]`) before switching
+  divider (`clk_sys / 8` → `50 MHz`, divider clamped to `[4..8]`) before switching
   the PLL. If a chip cannot synthesize 400 MHz, it falls back to boot clock.
 - **ADC sample rate:** on RP2350 `clk_adc` defaults to 48 MHz and does not track
   `clk_sys`. With `-DNVVDD_ADC`, `pwmvid` reparents `clk_adc` onto `PLL_SYS`
