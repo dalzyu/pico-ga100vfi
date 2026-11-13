@@ -98,10 +98,10 @@ static bool i2c_up;
 static uint32_t i2c_baud_hz = 100000;
 
 static void i2c_pins_float(void) {
-    for (uint p = I2C_SDA; p <= I2C_SCL; p++) {
-        gpio_disable_pulls(p);
-        gpio_init(p);
-    }
+    gpio_disable_pulls(I2C_SDA);
+    gpio_init(I2C_SDA);
+    gpio_disable_pulls(I2C_SCL);
+    gpio_init(I2C_SCL);
 }
 
 static bool i2c_bring_up(void) {
@@ -111,17 +111,17 @@ static bool i2c_bring_up(void) {
         printf("I2C ERR bus low (GPU off?)\n");
         return false;
     }
-    i2c_init(i2c0, i2c_baud_hz);
-    for (uint p = I2C_SDA; p <= I2C_SCL; p++) {
-        gpio_disable_pulls(p);
-        gpio_set_function(p, GPIO_FUNC_I2C);
-    }
+    i2c_init(I2C_BUS, i2c_baud_hz);
+    gpio_disable_pulls(I2C_SDA);
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_disable_pulls(I2C_SCL);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
     i2c_up = true;
     return true;
 }
 
 static void i2c_release(void) {
-    if (i2c_up) i2c_deinit(i2c0);
+    if (i2c_up) i2c_deinit(I2C_BUS);
     i2c_pins_float();
     i2c_up = false;
     printf("I2C released\n");
@@ -131,7 +131,7 @@ static void i2c_cmd(char *line) {
     char op = line[1];
     if (op == 'q') { i2c_release(); return; }
     if (op == 'L') {
-        if (i2c_up) { i2c_deinit(i2c0); i2c_up = false; }
+        if (i2c_up) { i2c_deinit(I2C_BUS); i2c_up = false; }
         gpio_disable_pulls(I2C_SDA);
         gpio_init(I2C_SDA);
         gpio_disable_pulls(I2C_SCL);
@@ -151,7 +151,7 @@ static void i2c_cmd(char *line) {
         unsigned long hz = strtoul(line + 2, NULL, 10);
         if (hz == 100000 || hz == 400000 || hz == 1000000) {
             i2c_baud_hz = hz;
-            if (i2c_up) { i2c_deinit(i2c0); i2c_up = false; }
+            if (i2c_up) { i2c_deinit(I2C_BUS); i2c_up = false; }
             printf("I2C baud %lu\n", hz);
         } else printf("I2C ERR baud\n");
         return;
@@ -172,20 +172,20 @@ static void i2c_cmd(char *line) {
         printf("I2C scan:");
         for (uint a = 0x08; a < 0x78; a++) {
             uint8_t d;
-            if (i2c_read_timeout_us(i2c0, a, &d, 1, false, I2C_TO_US) == 1)
+            if (i2c_read_timeout_us(I2C_BUS, a, &d, 1, false, I2C_TO_US) == 1)
                 printf(" %02x", a);
         }
         printf("\n");
     } else if (op == 'r' && nb == 3 && b[2] > 0 && b[2] <= 32) {
         uint8_t d[32];
-        int r = i2c_write_timeout_us(i2c0, b[0], &b[1], 1, true, I2C_TO_US);
-        if (r == 1) r = i2c_read_timeout_us(i2c0, b[0], d, b[2], false, I2C_TO_US);
+        int r = i2c_write_timeout_us(I2C_BUS, b[0], &b[1], 1, true, I2C_TO_US);
+        if (r == 1) r = i2c_read_timeout_us(I2C_BUS, b[0], d, b[2], false, I2C_TO_US);
         if (r != b[2]) { printf("I2C ERR %d\n", r); return; }
         printf("I2C OK");
         for (int i = 0; i < r; i++) printf(" %02x", d[i]);
         printf("\n");
     } else if (op == 'w' && nb >= 2) {
-        int r = i2c_write_timeout_us(i2c0, b[0], &b[1], nb - 1, false, I2C_TO_US);
+        int r = i2c_write_timeout_us(I2C_BUS, b[0], &b[1], nb - 1, false, I2C_TO_US);
         if (r != nb - 1) printf("I2C ERR %d\n", r);
         else printf("I2C OK\n");
     } else printf("I2C ERR usage\n");
@@ -197,7 +197,7 @@ static bool pmbus_w(uint8_t reg, const uint8_t *d, int n) {
     uint8_t b[4];
     b[0] = reg;
     for (int i = 0; i < n; i++) b[1 + i] = d[i];
-    return i2c_write_timeout_us(i2c0, 0x25, b, n + 1, false, I2C_TO_US) == n + 1;
+    return i2c_write_timeout_us(I2C_BUS, 0x25, b, n + 1, false, I2C_TO_US) == n + 1;
 }
 
 static bool pmbus_w16(uint8_t reg, uint16_t v) {
@@ -207,8 +207,8 @@ static bool pmbus_w16(uint8_t reg, uint16_t v) {
 
 static bool pmbus_r(uint8_t reg, uint8_t *d, int n) {
     if (!i2c_bring_up()) return false;
-    if (i2c_write_timeout_us(i2c0, 0x25, &reg, 1, true, I2C_TO_US) != 1) return false;
-    return i2c_read_timeout_us(i2c0, 0x25, d, n, false, I2C_TO_US) == n;
+    if (i2c_write_timeout_us(I2C_BUS, 0x25, &reg, 1, true, I2C_TO_US) != 1) return false;
+    return i2c_read_timeout_us(I2C_BUS, 0x25, d, n, false, I2C_TO_US) == n;
 }
 
 static void unlock_cmd(void) {
@@ -374,7 +374,7 @@ typedef struct { int32_t t_us; uint8_t act; int32_t arg; } gstep_t;
 
 static void scl_hold(bool low) {
     if (low) {
-        if (i2c_up) { i2c_deinit(i2c0); i2c_up = false; }
+        if (i2c_up) { i2c_deinit(I2C_BUS); i2c_up = false; }
         gpio_disable_pulls(I2C_SDA);
         gpio_init(I2C_SDA);
         gpio_disable_pulls(I2C_SCL);
@@ -446,7 +446,7 @@ static void glitch_cmd(char *line) {
     }
 
     i2c_baud_hz = 1000000;
-    if (i2c_up) { i2c_deinit(i2c0); i2c_up = false; }
+    if (i2c_up) { i2c_deinit(I2C_BUS); i2c_up = false; }
     if (fast) profile_apply(true);
 
     printf("glitch vd=%d td=%d vr=%d tr=%d tv=%d fast=%d hold=%d pw=%d gap=%d delay=%d revert=%d\n",
@@ -474,7 +474,7 @@ static void glitch_cmd(char *line) {
     if (fast) profile_apply(false);
     sleep_ms(30);
     i2c_baud_hz = 100000;
-    if (i2c_up) { i2c_deinit(i2c0); i2c_up = false; }
+    if (i2c_up) { i2c_deinit(I2C_BUS); i2c_up = false; }
     uint8_t cml = 0, e1[2] = { 0, 0 };
     pmbus_r(0x7E, &cml, 1);
     pmbus_r(0xE1, e1, 2);

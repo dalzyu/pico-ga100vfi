@@ -89,8 +89,30 @@ The glitch sequence itself is identical either way — actuation never reads the
 | RP2350B *(default, tested)* | Pico 2 W, Waveshare Plus-W | GP42 (ADC2) |
 | RP2350A | Pico 2 | GP26–GP29 only |
 
-`firmware/board.h` holds the pin map and rejects invalid family/ADC pin combos at
-compile time.
+`firmware/board.h` holds the pin map and validates family, ADC, and hardware I2C
+pin choices at compile time.
+
+### Customizing pin definitions
+
+Edit the `#define PIN_*` macros in [`firmware/board.h`](firmware/board.h), then
+rebuild and reflash:
+
+- **`PIN_I2C_SDA` / `PIN_I2C_SCL` (I2CC):** must be **hardware I2C** pins on the
+  same controller (`i2c0` or `i2c1`) — hardware I2C is required for deterministic
+  1 MHz PMBus timing during the glitch. `board.h` picks `I2C_BUS` automatically from
+  `PIN_I2C_SDA` and rejects mismatched pairs at compile time:
+
+  | Controller | Valid SDA pins | Valid SCL pins |
+  |---|---|---|
+  | `i2c0` *(default: GP0 / GP1)* | `GP % 4 == 0` (`0, 4, 8, 12, 16, 20, 24, 28`, …) | `GP % 4 == 1` (`1, 5, 9, 13, 17, 21, 25, 29`, …) |
+  | `i2c1` | `GP % 4 == 2` (`2, 6, 10, 14, 18, 22, 26`, …) | `GP % 4 == 3` (`3, 7, 11, 15, 19, 23, 27`, …) |
+
+- **`PIN_PEX_RST`:** any unused GPIO (`0–29` on RP2350A, `0–47` on RP2350B).
+- **`PIN_NVVDD_ADC`:** any ADC-capable pin for your chip (`GP26–GP29` on RP2350A,
+  `GP40–GP47` on RP2350B).
+
+*(Note: `firmware/detect.c` is a standalone probe and keeps its own `I2C_SDA = 0`,
+`I2C_SCL = 1`, `i2c0` constants.)*
 
 ## Repository layout
 

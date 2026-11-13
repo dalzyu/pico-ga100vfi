@@ -13,13 +13,17 @@
 #error "define BOARD_RP2350A or BOARD_RP2350B"
 #endif
 
-// I2C to the NVVDD controller. External pull-ups to the board's 3V3 rail.
+// I2C to the NVVDD controller (external pull-ups to the board's 3V3 rail).
+// Must be hardware I2C pins on the same controller (i2c0 or i2c1):
+//   i2c0: SDA = GP % 4 == 0 (0, 4, 8, ...),  SCL = GP % 4 == 1 (1, 5, 9, ...)
+//   i2c1: SDA = GP % 4 == 2 (2, 6, 10, ...), SCL = GP % 4 == 3 (3, 7, 11, ...)
+// I2C_BUS selects i2c0 or i2c1 automatically from PIN_I2C_SDA.
 #define PIN_I2C_SDA 0
 #define PIN_I2C_SCL 1
+#define I2C_BUS     (((PIN_I2C_SDA) & 2) ? i2c1 : i2c0)
 
-// Fundamental reset. Only ever driven low, then released to high-Z.
+// Fundamental reset (any free GPIO). Only driven low, then released to high-Z.
 #define PIN_PEX_RST 22
-
 // NVVDD sense (optional, requires -DNVVDD_ADC at compile time).
 #ifdef BOARD_RP2350A
 #define PIN_NVVDD_ADC 26
@@ -36,6 +40,15 @@
 #endif
 #if defined(BOARD_RP2350B) && (PIN_NVVDD_ADC < 40 || PIN_NVVDD_ADC > 47)
 #error "RP2350B ADC pins are GP40-GP47"
+#endif
+#if (PIN_I2C_SDA % 4) != 0 && (PIN_I2C_SDA % 4) != 2
+#error "PIN_I2C_SDA must be a hardware I2C SDA pin (GP % 4 == 0 for i2c0, GP % 4 == 2 for i2c1)"
+#endif
+#if (PIN_I2C_SCL % 4) != ((PIN_I2C_SDA % 4) + 1)
+#error "PIN_I2C_SCL must be an SCL pin on the same hardware I2C controller as PIN_I2C_SDA"
+#endif
+#if defined(BOARD_RP2350A) && (PIN_I2C_SDA > 29 || PIN_I2C_SCL > 29 || PIN_PEX_RST > 29)
+#error "RP2350A GPIOs are GP0-GP29"
 #endif
 
 #endif  // BOARD_H
