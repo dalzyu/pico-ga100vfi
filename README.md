@@ -7,7 +7,7 @@ RP2350A / RP2350B boards using an I2C-only actuation path.
 Credits:
 - [`kate-land`](https://github.com/kate-land) for discovering the GA100 VFI method,
   the fuse controller map, and the original tooling ([write-up](https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/)).
-- `mellojello_`, who published an 8 GB CMP 170HX write-up concurrently and proved
+- [`mellojello_`](https://github.com/JosiahWhite), who published an 8 GB CMP 170HX write-up concurrently and proved
   out the I2C + `PEX_RST` path first.
 
 MIT licensed. See `LICENSE`.
