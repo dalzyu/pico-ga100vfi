@@ -29,48 +29,80 @@ def cmd_baseline(args) -> int:
         print(json.dumps(snapshot(bar), indent=2))
     return 0
 
+
 def cmd_attempt(args) -> int:
     a = Attempt(args.v_dip, args.t_dip, args.v_restore,
-                args.t_restore, args.t_revert, delay=args.delay,
-                pulses=args.pulses, pw=args.pw, gap=args.gap, revert=args.revert)
+                args.t_restore, args.t_revert, args.fast, args.hold_ms,
+                args.pulses, args.pw, args.gap, args.delay, args.revert)
     with Card(args.port) as card:
-        pwd, e1 = card.lock_status()
-        if not pwd and not args.no_unlock:
-            if not card.unlock():
-                print("unlock failed: controller locked until VDD33 cycles",
-                      file=sys.stderr)
-                return 2
         rep = card.attempt(a)
-        print(json.dumps({"pwd": rep.pwd, "e1": f"0x{rep.e1:04x}",
-                          "nvvdd": rep.nvvdd,
-                          "writes_failed": rep.writes_failed}, indent=2))
+        print(f"pwd={rep.pwd} e1=0x{rep.e1:04x} nvvdd={rep.nvvdd} "
+              f"writes_failed={rep.writes_failed}")
         if args.trace:
-            print(" ".join(f"{v:04x}" for v in card.trace()))
+            print(card.trace())
     return 0
 
 
 def _ensure_unlocked(card: Card) -> bool:
     pwd, _ = card.lock_status()
-    if not pwd and not card.unlock():
-        return False
-    # Ensure write-protect + config-id 0x1229 so GPU devinit skips re-lock.
-    if card.read(0x25, 0x46, 2) != b"\x29\x12":
-        card.write(0x25, 0x13, b"\x00")
-        card.write(0x25, 0x46, b"\x29\x12")
-    return True
+    if pwd:
+        return True
+    return card.unlock()
+
+
+def _classify_attempt(v) -> str:
+    """Classify a glitch attempt for adaptive calibration.
+
+    under: dsov=1 (dip too shallow). over: dsov=0 but crc != 0x55 (too deep).
+    hit: dsov=0 and crc=0x55 (in the window). goldilocks: all checks pass.
+    """
+    if v.passed:
+        return "goldilocks"
+    if v.dsov == 1:
+        return "under"
+    if v.crc_status == 0x55:
+        return "hit"
+    return "over"
+
+
+def _adjust_v_dip(v_dip, step, direction, oc, args):
+    """Pick the next v_dip from a batch's outcome counts.
+
+    Returns (v_dip, step, direction, still_searching).
+    """
+    n_u = oc["under"]
+    n_o = oc["over"] + oc["lost"]
+    n_h = oc["hit"] + oc["goldilocks"]
+
+    if n_h > 0:
+        return v_dip, step, direction, False
+    if n_u > 0 and n_o == 0:
+        new_dir = -1
+        if direction != 0 and new_dir != direction:
+            step = max(step // 2, 6)
+        return max(v_dip - step, args.min_v), step, new_dir, True
+    if n_o > 0 and n_u == 0:
+        new_dir = +1
+        if direction != 0 and new_dir != direction:
+            step = max(step // 2, 6)
+        return min(v_dip + step, args.max_v), step, new_dir, True
+    if n_u > 0 and n_o > 0:
+        return v_dip, max(step // 2, 6), direction, True
+    return v_dip, step, direction, True
 
 
 def cmd_campaign(args) -> int:
-    a = Attempt(
-        v_dip_mv=args.v_dip, t_dip_us=args.t_dip,
-        v_restore_mv=args.v_restore, t_restore_us=args.t_restore,
-        t_revert_us=args.t_revert, fast=1, hold_ms=0,
-        pulses=args.pulses, pw=args.pw, gap=args.gap,
-        delay=args.delay, revert=0,
-    )
+    v_dip = args.v_dip
+    step = args.step
+    direction = 0
+    searching = args.adaptive
+    batch_i = 0
+    batch_oc = None
+    rounds = []
     t0 = time.monotonic()
     tries = valid = lost = nack = dsov0 = 0
     verdict = None
+
     with Card(args.port) as card:
         if not args.no_unlock and not _ensure_unlocked(card):
             print("unlock failed: controller locked until VDD33 cycles",
@@ -78,7 +110,16 @@ def cmd_campaign(args) -> int:
             return 2
         try:
             while args.max_attempts <= 0 or tries < args.max_attempts:
+                if verdict is not None:
+                    break
                 tries += 1
+                a = Attempt(
+                    v_dip_mv=v_dip, t_dip_us=args.t_dip,
+                    v_restore_mv=args.v_restore, t_restore_us=args.t_restore,
+                    t_revert_us=args.t_revert, fast=1, hold_ms=0,
+                    pulses=args.pulses, pw=args.pw, gap=args.gap,
+                    delay=args.delay, revert=0,
+                )
                 try:
                     rep = card.attempt(a)
                 except IOError as e:
@@ -90,6 +131,8 @@ def cmd_campaign(args) -> int:
                             _ensure_unlocked(card)
                         except IOError:
                             pass
+                    if args.adaptive:
+                        batch_oc["nack"] += 1
                     continue
                 if rep.writes_failed > 0:
                     nack += 1
@@ -98,13 +141,19 @@ def cmd_campaign(args) -> int:
                             _ensure_unlocked(card)
                         except IOError:
                             pass
+                    if args.adaptive:
+                        batch_oc["nack"] += 1
                     continue
                 if not restore(args.bdf, wait_s=args.restore_wait):
                     lost += 1
+                    if args.adaptive:
+                        batch_oc["lost"] += 1
                     continue
                 with Bar0(args.bdf) as bar:
                     if bar.rd32(0x00) == 0xFFFFFFFF:
                         lost += 1
+                        if args.adaptive:
+                            batch_oc["lost"] += 1
                         continue
                     v = classify(bar)
                 valid += 1
@@ -117,14 +166,41 @@ def cmd_campaign(args) -> int:
                 if v.passed:
                     verdict = v
                     break
+
+                if not args.adaptive:
+                    continue
+
+                if batch_i == 0:
+                    batch_oc = {k: 0 for k in
+                                ("goldilocks", "hit", "under", "over", "lost", "nack")}
+                batch_oc[_classify_attempt(v)] += 1
+                batch_i += 1
+
+                if batch_i < args.batch:
+                    continue
+
+                # Batch complete — adjust v_dip
+                rounds.append({"v_dip": v_dip, "outcomes": dict(batch_oc),
+                              "searching": searching})
+                if searching:
+                    v_dip, step, direction, searching = _adjust_v_dip(
+                        v_dip, step, direction, batch_oc, args)
+                    if not searching:
+                        print(f"[adaptive] window found at v_dip={v_dip}",
+                              file=sys.stderr, flush=True)
+                print(f"[adaptive] v_dip={v_dip} step={step} dir={direction} "
+                      f"({batch_oc})", file=sys.stderr, flush=True)
+                batch_i = 0
         finally:
             if not args.no_revert:
                 try:
                     card.revert()
                 except Exception as e:
                     print(f"warn: revert failed: {e}", file=sys.stderr)
+
     out = {
         "goldilocks": verdict is not None,
+        "v_dip": v_dip,
         "attempts": tries,
         "valid": valid,
         "lost": lost,
@@ -133,8 +209,11 @@ def cmd_campaign(args) -> int:
         "elapsed_s": round(time.monotonic() - t0, 2),
         "verdict": verdict.as_dict() if verdict else None,
     }
+    if args.adaptive:
+        out["rounds"] = rounds
     print(json.dumps(out, indent=2))
     return 0 if verdict is not None else 1
+
 
 def cmd_revert(args) -> int:
     with Card(args.port) as card:
@@ -193,6 +272,18 @@ def main(argv=None) -> int:
     camp.add_argument("--no-unlock", action="store_true")
     camp.add_argument("--no-revert", action="store_true",
                       help="leave VRM in PMBus mode after campaign")
+    camp.add_argument("--adaptive", action="store_true",
+                      help="auto-calibrate v_dip: adjust between batches based "
+                           "on under/over/hit outcomes until the Goldilocks "
+                           "window is found, then grind")
+    camp.add_argument("--step", type=int, default=6,
+                      help="adaptive: adjustment step in mV; 6 = one PMBus LSB")
+    camp.add_argument("--batch", type=int, default=5,
+                      help="adaptive: attempts per v_dip before adjusting")
+    camp.add_argument("--min-v", type=int, default=300,
+                      help="adaptive: safety floor (mV)")
+    camp.add_argument("--max-v", type=int, default=380,
+                      help="adaptive: safety ceiling (mV)")
     camp.set_defaults(fn=cmd_campaign)
 
     r = sub.add_parser("revert", help="restore the stock control path")

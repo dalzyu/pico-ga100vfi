@@ -1,8 +1,8 @@
 // Pin map for the RP2350 glitcher.
 //
 // Define BOARD_RP2350A or BOARD_RP2350B at configure time.
-// NVVDD_ADC: compile-time option (-DNVVDD_ADC) to enable ADC sampling of
-// the NVVDD rail on the pin below. Without it, `v` reports nvvdd=N/A.
+// DEBUG: compile-time option (-DDEBUG) for the budget oscilloscope build.
+// Enables 400 MHz OC + ADC sampling of the NVVDD rail on the pin below.
 #ifndef BOARD_H
 #define BOARD_H
 

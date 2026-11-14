@@ -1,21 +1,17 @@
 // Glitcher for the NVVDD rail (MP2888B @ I2C 0x25) on GA100 boards.
 //
-// Wiring (only four RP2350 pins are connected to the card):
+// Wiring (only three RP2350 pins are connected to the card):
 //   GP0  I2C0 SDA  -> MP2888B (PMBus, 0x25)
 //   GP1  I2C0 SCL
 //   GP22 PEX_RST_BUF*  (drive low to reset, release to high-Z; never drive high)
-//   GP42 NVVDD sense   (ADC2, optional, diagnostic only)
 //
-// GP15 (PWM-VID handback) and GP40 (PWM-VID capture) are NOT connected: the
-// 0-ohm R30 on the GPU PCB is refitted and the GPU drives the MP2888B itself.
-// GP2 (PS_VMON_PGOOD) is NOT connected.
+// Actuation is I2C-only: VOUT_COMMAND steps on the MP2888B plus PEX_RST.
+// The glitch runs at the RP2350's stock 150 MHz — no overclock is needed.
 //
-// Actuation is I2C-only: VOUT_COMMAND steps on the MP2888B plus PEX_RST. The
-// NVVDD ADC never feeds the glitch decision, so the sense wire is optional:
-// build without -DNVVDD_ADC (or leave GP42 unwired) and VFI is unchanged;
-// `v` then reports nvvdd=N/A and `y` is empty.
-//
-// Core 1 only feeds the watchdog; the ADC trace is captured by DMA on core 0.
+// Debug build (-DDEBUG): adds a 400 MHz overclock and the NVVDD ADC (GP42)
+// for budget-oscilloscope functionality — a high-rate NVVDD trace via `y`
+// and a rail readout via `v`. The ADC never feeds the glitch decision.
+// Normal build: stock clocks, no ADC, GP42 stays unconnected.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,9 +31,13 @@
 
 #include "board.h"
 
+#ifdef DEBUG
+// 400 MHz overclock + VREG boost for the debug/trace build only.
 #define TARGET_KHZ   400000
 #define VREG_VSEL    VREG_VOLTAGE_1_50
-#define PEX_RST_PIN  PIN_PEX_RST
+#endif
+
+ #define PEX_RST_PIN  PIN_PEX_RST
 
 // PMBus VOUT_COMMAND: 6.25 mV/LSB.
 #define VID_LSB_MV   6.25f
@@ -48,6 +48,7 @@
 
 // ------------------------------------------------------------------ clocks
 static void clock_init(void) {
+#ifdef DEBUG
     vreg_disable_voltage_limit();
     vreg_set_voltage(VREG_VSEL);
     sleep_us(1000);
@@ -63,7 +64,6 @@ static void clock_init(void) {
         printf("pwmvid: %u kHz unsupported, staying at %u MHz\n",
                TARGET_KHZ, clock_get_hz(clk_sys) / 1000000);
 
-#ifdef NVVDD_ADC
     // clk_adc does not follow clk_sys on RP2350; point it at PLL_SYS so the
     // 96-cycle conversion scales with the core (~0.24 us/sample at 400 MHz).
     uint32_t fadc = clock_get_hz(clk_sys);
@@ -71,6 +71,7 @@ static void clock_init(void) {
                     fadc, fadc);
 #endif
 }
+
 
 // ------------------------------------------------------------- card control
 // PEX_RST_BUF* carries an external 10k pull-up; drive low to assert, release
@@ -265,9 +266,9 @@ static void profile_cmd(bool fast) {
 // ------------------------------------------------------------ optional ADC
 // Diagnostic only: the glitch path never reads the rail. GP42 is sampled by a
 // free-running ADC into a buffer via DMA, giving a high-rate NVVDD trace for
-// `y` and the `v` readout. Built out (no -DNVVDD_ADC) these become no-ops and
+// `y` and the `v` readout. Built out (no -DDEBUG) these become no-ops and
 // VFI is unaffected.
-#ifdef NVVDD_ADC
+#ifdef DEBUG
 
 #define TRACE_N 16384
 static uint16_t trace[TRACE_N];
@@ -349,14 +350,14 @@ static void trace_dump(int n) {
     printf("\n");
 }
 
-#else // !NVVDD_ADC
+#else // !DEBUG
 
 static void adc_init_capture(void) {}
 static void capture_start(void) {}
 static void capture_stop(void) {}
-static void trace_dump(int n) { (void)n; printf("trace: built without NVVDD_ADC\n"); }
+static void trace_dump(int n) { (void)n; printf("trace: built without DEBUG\n"); }
 
-#endif // NVVDD_ADC
+#endif // DEBUG
 
 // ---------------------------------------------------------------- glitch
 #define GA_VOUT    1
@@ -478,7 +479,7 @@ static void glitch_cmd(char *line) {
     uint8_t cml = 0, e1[2] = { 0, 0 };
     pmbus_r(0x7E, &cml, 1);
     pmbus_r(0xE1, e1, 2);
-#ifdef NVVDD_ADC
+#ifdef DEBUG
     printf("glitch done pwd=%d e1=0x%02x%02x nvvdd=%.4f writes_failed=%d\n",
            !!(cml & 0x08), e1[1], e1[0], nvvdd_v, wfail);
 #else
@@ -561,12 +562,12 @@ int main(void) {
     stdio_init_all();
     i2c_pins_float();
     sleep_ms(1500);
-    printf("\npwmvid: %u MHz, vsel=%d, wiring: I2C + PEX_RST",
-           clock_get_hz(clk_sys) / 1000000, VREG_VSEL);
-#ifdef NVVDD_ADC
-    printf(" + NVVDD ADC (GP%d)\n", PIN_NVVDD_ADC);
+    printf("\npwmvid: %u MHz, wiring: I2C + PEX_RST",
+           clock_get_hz(clk_sys) / 1000000);
+#ifdef DEBUG
+    printf(" + NVVDD ADC (GP%d) [debug build]\n", PIN_NVVDD_ADC);
 #else
-    printf(" (no ADC)\n");
+    printf("\n");
 #endif
     printf("last reset: %s\n", reset_note);
     printf("commands: v=status  r=pex-reset  j/J=hold/release PEX_RST"
@@ -591,14 +592,14 @@ int main(void) {
         }
         else if (c == '@' || c == 'g') { line[0] = (char)c; ll = 1; }
         else if (c == 'v') {
-#ifdef NVVDD_ADC
+#ifdef DEBUG
             nvvdd_refresh();
-            printf("clk=%u MHz  vsel=%d  nvvdd=%.4f V  sample_ns=%.1f  last reset: %s\n",
-                   clock_get_hz(clk_sys) / 1000000, VREG_VSEL,
+            printf("clk=%u MHz  nvvdd=%.4f V  sample_ns=%.1f  last reset: %s\n",
+                   clock_get_hz(clk_sys) / 1000000,
                    nvvdd_v, sample_ns, reset_note);
 #else
-            printf("clk=%u MHz  vsel=%d  nvvdd=N/A  last reset: %s\n",
-                   clock_get_hz(clk_sys) / 1000000, VREG_VSEL, reset_note);
+            printf("clk=%u MHz  last reset: %s\n",
+                   clock_get_hz(clk_sys) / 1000000, reset_note);
 #endif
         }
         else if (c == 'u') unlock_cmd();

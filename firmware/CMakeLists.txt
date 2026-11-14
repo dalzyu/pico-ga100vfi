@@ -9,9 +9,9 @@ pico_sdk_init()
 option(BOARD_RP2350A "Build for RP2350A (Pico 2)" OFF)
 option(BOARD_RP2350B "Build for RP2350B (Pico 2 W / Plus-W)" OFF)
 
-# NVVDD_ADC: enable ADC sampling of the NVVDD rail (GP42 on RP2350B).
-# Without it, `v` reports nvvdd=N/A and `y` prints a disabled notice.
-option(NVVDD_ADC "Enable NVVDD ADC monitoring (GP42)" ON)
+# DEBUG: budget oscilloscope build — 400 MHz overclock + NVVDD ADC (GP42)
+# for high-rate rail traces. Normal build: stock clocks, no ADC, no GP42 wire.
+option(DEBUG "Debug build: 400 MHz OC + NVVDD ADC trace" OFF)
 
 if(BOARD_RP2350A AND BOARD_RP2350B)
     message(FATAL_ERROR "enable only one of BOARD_RP2350A / BOARD_RP2350B")
@@ -28,11 +28,11 @@ endif()
 message(STATUS "pico-ga100vfi: board family = ${BOARD_DEF}")
 
 set(BOARD_DEFS ${BOARD_DEF})
-if(NVVDD_ADC)
-    list(APPEND BOARD_DEFS NVVDD_ADC)
-    message(STATUS "pico-ga100vfi: NVVDD ADC enabled")
+if(DEBUG)
+    list(APPEND BOARD_DEFS DEBUG)
+    message(STATUS "pico-ga100vfi: DEBUG build (400 MHz + NVVDD ADC)")
 else()
-    message(STATUS "pico-ga100vfi: NVVDD ADC disabled")
+    message(STATUS "pico-ga100vfi: normal build (stock clocks, no ADC)")
 endif()
 
 add_executable(pwmvid pwmvid.c)

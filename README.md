@@ -12,11 +12,15 @@ Credits:
 
 MIT licensed. See `LICENSE`.
 
-## Overview
+## What it does
 
-This repo handles the voltage-glitch step (getting the card into the Goldilocks
-state). For the deep dive on how the GA100 fuse controller works, read
-[Kate's blog post](https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/).
+A GA100 samples its fuse block once, early in power-on reset. Dropping NVVDD below
+the sense-amp threshold across that window makes the block read back as unburned.
+The card comes up with `DSOV = 0` (software override unlocked), making the shadow
+registers readable and writable.
+
+This repo drives that dip over the board's I2C bus via PMBus commands to the
+MP2888B voltage controller, timed off the `PEX_RST` release edge.
 
 Unlocking disabled units on a GA100 goes in four steps:
 
@@ -33,88 +37,40 @@ Unlocking disabled units on a GA100 goes in four steps:
 4. **Power cycle** — power-cycle so the fuse controller replays the new FF chain on
    a clean boot.
 
-## What it does
-
-A GA100 samples its fuse block once, early in power-on reset. Dropping NVVDD below
-the sense-amp threshold across that window makes the block read back as unburned.
-The card comes up with `DSOV = 0` (software override unlocked), making the shadow
-registers readable and writable.
-
-This repo drives that dip over the board's I2C bus via PMBus commands to the
-MP2888B voltage controller, timed off the `PEX_RST` release edge.
+This repo handles the voltage-glitch step (getting the card into the Goldilocks
+state). For the deep dive on how the GA100 fuse controller works, read
+[Kate's blog post](https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/).
 
 ## How to connect Pico 2 to 170HX Board
 
-| Connection | Required? | Status | Purpose |
-|---|---|---|---|
-| `GND` | **yes** | **connected** | common ground between Pico and GPU PCB (required reference for I2C, `PEX_RST`, and ADC) |
-| I2C SDA + SCL (`GP0` / `GP1`) | **yes** | **connected** | PMBus to the MP2888B NVVDD controller (`VOUT_COMMAND`, `E1` mode, `VOUT_MIN`) |
-| `PEX_RST` (`GP22`) | **yes** | **connected** | fundamental reset (`PEX_RST_BUF*`); its release edge is `t = 0` |
-| NVVDD sense → ADC2 (`GP42`) | no | optional | rail trace (`y`) and `nvvdd` average in `glitch done` (diagnostic only) |
+| Connection | Required? | Purpose |
+|---|---|---|
+| `GND` | **yes** | common ground between Pico and GPU PCB |
+| I2C SDA + SCL (`GP0` / `GP1`) | **yes** | PMBus to the MP2888B NVVDD controller |
+| `PEX_RST` (`GP22`) | **yes** | fundamental reset (`PEX_RST_BUF*`); its release edge is `t = 0` |
 
-The minimal rig is **GND, I2C (`GP0`/`GP1`), and `PEX_RST` (`GP22`)**. Adding `GP42`
-gives you the high-rate NVVDD trace for tuning.
+That's it — four wires.
 
-A direct **common ground** wire between the Pico and the GPU PCB is mandatory — do
-not rely on USB shield / motherboard PCIe ground alone. Without a tight ground
-return, 1 MHz I2C edges, `PEX_RST` V_IL, and millivolt-level ADC readings suffer
-ground-bounce and offset errors.
+A direct **common ground** wire between the Pico and the GPU PCB is highly recommended.
 
-![Wiring block diagram: GP0 to I2CC_SDA, GP1 to I2CC_SCL, GP22 to PEX_RST_BUF*, and optional GP42 to NVVDD](docs/images/wiring-diagram.jpg)
+![Wiring block diagram: GP0 to I2CC_SDA, GP1 to I2CC_SCL, GP22 to PEX_RST_BUF*](docs/images/wiring-diagram.jpg)
 
-![RP2350B-Plus-W mounted on the back of a CMP 170HX showing GND, GP0/GP1 (I2CC), GP22 (PEX_RST_BUF*), and optional GP42 (NVVDD)](docs/images/board-wiring-overview.jpg)
+![RP2350B-Plus-W mounted on the back of a CMP 170HX showing GND, GP0/GP1 (I2CC), GP22 (PEX_RST_BUF*)](docs/images/board-wiring-overview.jpg)
 
 ![Close-up of the I2CC tap points near Q808 and the PEX_RST_BUF* tap at U809](docs/images/tap-points-closeup.jpg)
 
 The `PEX_RST` tap must be a **direct** wire (no series resistor) — U809 drives that
 net push-pull, so a series resistor keeps the Pico from pulling it below V_IL.
 
-### Optional NVVDD ADC
-
-ADC capture is on by default at compile time. If `GP42` is not wired, build with
-`-DNVVDD_ADC=OFF` so the ADC doesn't sample a floating pin:
-
-```sh
-cmake -S firmware -B build-noadc -DPICO_BOARD=pico2_w -DNVVDD_ADC=OFF -G Ninja
-ninja -C build-noadc
-```
-
-With the ADC off:
-- the banner ends `wiring: I2C + PEX_RST (no ADC)`
-- `v` reports `nvvdd=N/A`
-- `glitch done` drops the `nvvdd` field (`pwd` and `writes_failed` stay)
-- `y` prints `trace: built without NVVDD_ADC`
-- core 1 just feeds the watchdog
-
-The glitch sequence itself is identical either way — actuation never reads the ADC.
-
 ### Board support
 
-| Family | Boards | NVVDD ADC |
+| Family | Boards | Debug ADC pin |
 |---|---|---|
 | RP2350B *(default, tested)* | Pico 2 W, Waveshare Plus-W | GP42 (ADC2) |
 | RP2350A | Pico 2 | GP26–GP29 only |
 
 `firmware/board.h` holds the pin map and validates family, ADC, and hardware I2C
 pin choices at compile time.
-
-### 400 MHz overclock & ADC clock
-
-`pwmvid` overclocks the RP2350 system clock to **400 MHz** (`TARGET_KHZ = 400000`
-in [`firmware/pwmvid.c`](firmware/pwmvid.c)):
-
-- **Core voltage & flash timing:** disables the VREG voltage limit, raises core
-  voltage to **1.50 V** (`VREG_VOLTAGE_1_50`), and scales the QMI XIP flash
-  divider (`clk_sys / 8` → `50 MHz`, divider clamped to `[4..8]`) before switching
-  the PLL. If a chip cannot synthesize 400 MHz, it falls back to boot clock.
-- **ADC sample rate:** on RP2350 `clk_adc` defaults to 48 MHz and does not track
-  `clk_sys`. With `-DNVVDD_ADC`, `pwmvid` reparents `clk_adc` onto `PLL_SYS`
-  (400 MHz) so the 96-cycle SAR conversion speeds up from `2.0 µs` to
-  **`240 ns/sample` (~4.17 MSa/s)** — high enough to resolve ~150–200 µs NVVDD
-  dips cleanly.
-- **`detect` stays at stock clocks:** `firmware/detect.c` does not touch VREG,
-  PLL, or QMI so you can debug I2C wiring even on a board that won't take the
-  400 MHz OC.
 
 ### Customizing pin definitions
 
@@ -138,33 +94,12 @@ rebuild and reflash:
 *(Note: `firmware/detect.c` is a standalone probe and keeps its own `I2C_SDA = 0`,
 `I2C_SCL = 1`, `i2c0` constants.)*
 
-## Repository layout
-
-```
-firmware/
-  board.h          pin map (single source of truth)
-  pwmvid.c         main firmware: timed voltage stage + reset pulse
-  detect.c         standalone I2C probe (plain Pico 2)
-  CMakeLists.txt   builds pwmvid + detect; defaults to BOARD_RP2350B
-host/
-  pyproject.toml   packaging (`pip install -e host/`)
-  ga100vfi/
-    bar0.py        BAR0 mapping, post-reset sysfs restore, and register access
-    classify.py    the five Goldilocks per-attempt checks
-    glitch.py      serial client and attempt issuance
-    cli.py         `ga100vfi` CLI (`campaign`, `attempt`, `classify`, `baseline`, `revert`)
-docs/
-  BUILD.md         prerequisites, per-family build, flashing, verification
-  PROTOCOL.md      serial command set and firmware safety invariants
-  images/          wiring diagram and tap-point photos
-```
-
 ## Build
 
 ```sh
-export PICO_SDK_PATH=/path/to/pico-sdk
+export PICO_SDK_PATH=/path/to-pico-sdk
 
-# RP2350B (default)
+# Normal build (stock clocks, no ADC — just three wires)
 cmake -S firmware -B build -DPICO_BOARD=pico2_w -G Ninja
 ninja -C build
 
@@ -175,6 +110,79 @@ ninja -C build-pico2
 
 Outputs `build/pwmvid.uf2` and `build/detect.uf2`. Hold BOOTSEL, plug USB, and copy
 the `.uf2` onto the `RP2350` drive. More detail in [`docs/BUILD.md`](docs/BUILD.md).
+
+### Debug build (budget oscilloscope)
+
+The normal build is minimal: stock 150 MHz clocks, no ADC
+For tuning and debugging, a **debug build** adds a 400 MHz overclock and
+NVVDD rail sampling on GP42 (wire the NVVDD sense point to GP42):
+
+```sh
+cmake -S firmware -B build-debug -DPICO_BOARD=pico2_w -DDEBUG=ON -G Ninja
+ninja -C build-debug
+```
+
+With `-DDEBUG=ON`:
+- 400 MHz overclock (VREG 1.50 V, QMI XIP flash divider scaled)
+- NVVDD ADC on GP42 at ~4.17 MSa/s (240 ns/sample)
+- `y` dumps a 16384-sample rail trace
+- `v` reports the live rail voltage
+- `glitch done` includes an `nvvdd=` average
+
+The ADC never feeds the glitch decision — it's purely diagnostic.
+
+## Host usage
+
+Plug the Pico over USB into the **same host machine that has the CMP 170HX
+installed** (`/dev/ttyACM0`) — the host client needs both serial control of the
+Pico and direct PCIe BAR0 access to the card. Make sure `nvidia` is
+unloaded and blacklisted (otherwise the driver re-locks the VRM and binds before you
+can inspect BAR0).
+
+```sh
+# Install once (or prefix commands with PYTHONPATH=host)
+pip install -e host/
+
+# Recommended: auto-calibrate v_dip and glitch to Goldilocks in one step.
+# Card-to-card VRM and die variation means the optimal dip voltage differs
+# between boards — adaptive finds it for your card automatically.
+sudo python3 -m ga100vfi campaign --bdf 0000:1a:00.0 --adaptive
+
+# If you already know your card's v_dip (e.g. from a previous adaptive run):
+sudo python3 -m ga100vfi campaign --bdf 0000:1a:00.0 --v-dip 358
+
+# Single-shot & diagnostic commands
+sudo python3 -m ga100vfi baseline --bdf 0000:1a:00.0   # shadow fuse snapshot
+sudo python3 -m ga100vfi classify --bdf 0000:1a:00.0   # restore BAR0 + run the 5 checks
+sudo python3 -m ga100vfi attempt --pulses 3 --v-dip 354 --t-dip -60 --v-restore 750 --pw 198 --gap 150 --delay 117 --trace
+sudo python3 -m ga100vfi revert                         # hand VRM back to PWM-VID
+```
+
+`campaign` exits `0` in the Goldilocks state with a JSON verdict on stdout and the
+VRM already handed back to stock PWM-VID control.
+
+### Adaptive calibration (`--adaptive`)
+
+The optimal `v_dip` varies between boards due to MP2888B VRM tolerance and
+die leakage — what works on one card may be too shallow or too deep on another.
+With `--adaptive`, the campaign fires batches at each `v_dip`, classifies every
+attempt as **under** (dsov=1, dip too shallow), **over** (dsov=0 with bad CRC
+or PCIe link lost, dip too deep), or **hit** (dsov=0 with CRC=0x55, in the
+Goldilocks window), then walks `v_dip` by one PMBus LSB (6.25 mV) toward the
+boundary. Once a **hit** appears, it stops adjusting and grinds at that
+voltage until all five Goldilocks checks pass.
+
+The output JSON reports the calibrated `v_dip` — use it with `--v-dip` for
+faster subsequent runs on the same card.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--adaptive` | off | Enable auto-calibration |
+| `--v-dip` | 354 | Starting point (mV); the search adjusts from here |
+| `--step` | 6 | Adjustment step (mV); 6 = one PMBus LSB (6.25 mV) |
+| `--batch` | 5 | Attempts per v_dip before adjusting |
+| `--min-v` | 300 | Safety floor (mV) |
+| `--max-v` | 380 | Safety ceiling (mV) |
 
 ## The glitch
 
@@ -197,7 +205,6 @@ waveform that knocks out only the row 0/1 control fuses:
 u                                        # unlock + config-id 0x1229 (stops devinit re-locking)
 g 354 -60 750 -20 0 1 0 3 198 150 117 0   # shallow triple pulse (revert=0 for fast campaign)
 ```
-
 
 **Note:** This glitch has only been tested on a single card. Silicon, VRM, and
 board-to-board variation means other cards may need fine-tuning (`--v-dip`,
@@ -222,31 +229,26 @@ on every shot, `56.9 s` total):
 
 ![100-shot outcome breakdown, cumulative Goldilocks probability, and per-attempt latency breakdown](docs/images/campaign-telemetry.png)
 
-## Host usage
+## Repository layout
 
-Plug the Pico over USB into the **same host machine that has the CMP 170HX
-installed** (`/dev/ttyACM0`) — `campaign` needs both serial control of the Pico
-and direct PCIe BAR0 access to the card on that host. Make sure `nvidia` is
-unloaded and blacklisted (otherwise the driver re-locks the VRM and binds before you
-can inspect BAR0).
-
-```sh
-# Install once (or prefix commands with PYTHONPATH=host)
-pip install -e host/
-
-# Loop glitches until Goldilocks (unlocks with config-id 0x1229, runs the shallow
-# triple pulse, restores BAR0 + classifies each shot, hands VRM back on exit)
-sudo python3 -m ga100vfi campaign --bdf 0000:1a:00.0
-
-# Single-shot & diagnostic commands
-sudo python3 -m ga100vfi baseline --bdf 0000:1a:00.0   # shadow fuse snapshot
-sudo python3 -m ga100vfi classify --bdf 0000:1a:00.0   # restore BAR0 + run the 5 checks
-sudo python3 -m ga100vfi attempt --pulses 3 --v-dip 354 --t-dip -60 --v-restore 750 --pw 198 --gap 150 --delay 117 --trace
-sudo python3 -m ga100vfi revert                         # hand VRM back to PWM-VID
 ```
-
-`campaign` exits `0` in the Goldilocks state with a JSON verdict on stdout and the
-VRM already handed back to stock PWM-VID control.
+firmware/
+  board.h          pin map (single source of truth)
+  pwmvid.c         main firmware: timed voltage stage + reset pulse
+  detect.c         standalone I2C probe (plain Pico 2)
+  CMakeLists.txt   builds pwmvid + detect; defaults to BOARD_RP2350B
+host/
+  pyproject.toml   packaging (`pip install -e host/`)
+  ga100vfi/
+    bar0.py        BAR0 mapping, post-reset sysfs restore, and register access
+    classify.py    the five Goldilocks per-attempt checks
+    glitch.py      serial client and attempt issuance
+    cli.py         `ga100vfi` CLI (`campaign`, `attempt`, `classify`, `baseline`, `revert`)
+docs/
+  BUILD.md         prerequisites, per-family build, flashing, verification
+  PROTOCOL.md      serial command set and firmware safety invariants
+  images/          wiring diagram and tap-point photos
+```
 
 ## Safety
 
