@@ -48,7 +48,8 @@ glitch done pwd=<0|1> e1=0x<hhhh> nvvdd=<v.vvvv> writes_failed=<n>
 
 `pwd` is the VRM unlock state, `e1` the MP2888 status word, `writes_failed` the
 count of PMBus writes that NACKed during the timeline (0 = bus healthy). `nvvdd`
-is the captured-rail average and is **omitted** in a build without `-DNVVDD_ADC`.
+is the captured-rail average and is **present only in the debug build**
+(`-DDEBUG=ON`); the normal build omits it.
 
 ## VRM unlock / status
 
@@ -56,8 +57,8 @@ is the captured-rail average and is **omitted** in a build without `-DNVVDD_ADC`
 |---|---|
 | `u` | Unlock the MP2888B (password `0x7C25`) |
 | `z` | Lock status → `cml=0x<hh> pwd=<0|1> e1=0x<hh><hh> vout=0x<hh><hh>` |
-| `v` | Status → `clk=<n> MHz  vsel=<n>  nvvdd=<v> V  sample_ns=<f>  last reset: <…>` (`nvvdd=N/A` without `-DNVVDD_ADC`) |
-| `y` | NVVDD trace → header `trace n=<n> sample_ns=<f>` then `<n>` hex samples; `trace: built without NVVDD_ADC` if disabled |
+| `v` | Status → debug build: `clk=<n> MHz  nvvdd=<v.vvvv> V  sample_ns=<f>  last reset: <…>`; normal build: `clk=<n> MHz  last reset: <…>` |
+| `y` | NVVDD trace → header `trace n=<n> sample_ns=<f>` then `<n>` hex samples; `trace: built without DEBUG` in the normal build |
 | `w` | Revert |
 | `k` / `K` | Apply `fast` / `stock` MP2888B transient-response profile |
 | `b` | Reboot RP2350 into USB BOOTSEL mode |
@@ -89,4 +90,5 @@ is the captured-rail average and is **omitted** in a build without `-DNVVDD_ADC`
 - After the dip the firmware restores `VOUT_COMMAND` to the stock code and hands the
   rail back to PWM-VID mode, so an interrupted run cannot leave NVVDD low.
 - The NVVDD ADC is read-only and never gates actuation, so the sense wire (GP42) is
-  optional (build without `-DNVVDD_ADC` or leave GP42 unwired).
+  optional. The ADC exists only in the debug build (`-DDEBUG=ON`); the normal build
+  never touches GP42 — just leave it unwired.

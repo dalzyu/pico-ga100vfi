@@ -24,7 +24,7 @@
 
 // Fundamental reset (any free GPIO). Only driven low, then released to high-Z.
 #define PIN_PEX_RST 22
-// NVVDD sense (optional, requires -DNVVDD_ADC at compile time).
+// NVVDD sense (sampled only in the DEBUG build; normal build never touches it).
 #ifdef BOARD_RP2350A
 #define PIN_NVVDD_ADC 26
 #define NVVDD_ADC_BASE 26

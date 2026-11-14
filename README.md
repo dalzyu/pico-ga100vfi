@@ -113,8 +113,8 @@ the `.uf2` onto the `RP2350` drive. More detail in [`docs/BUILD.md`](docs/BUILD.
 
 ### Debug build (budget oscilloscope)
 
-The normal build is minimal: stock 150 MHz clocks, no ADC
-For tuning and debugging, a **debug build** adds a 400 MHz overclock and
+The normal build is minimal: stock 150 MHz clocks, no ADC. For tuning and
+debugging, a **debug build** adds a 400 MHz overclock and
 NVVDD rail sampling on GP42 (wire the NVVDD sense point to GP42):
 
 ```sh

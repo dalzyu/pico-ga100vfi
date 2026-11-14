@@ -29,9 +29,9 @@ ninja -C build
 cmake -S firmware -B build-pico2 -DPICO_BOARD=pico2 -DBOARD_RP2350A=ON -G Ninja
 ninja -C build-pico2
 
-# NVVDD ADC disabled (GP42 unwired)
-cmake -S firmware -B build-noadc -DPICO_BOARD=pico2_w -DNVVDD_ADC=OFF -G Ninja
-ninja -C build-noadc
+# Debug build (400 MHz OC + NVVDD ADC trace; diagnostic only)
+cmake -S firmware -B build-debug -DPICO_BOARD=pico2_w -DDEBUG=ON -G Ninja
+ninja -C build-debug
 ```
 
 Outputs: `build/pwmvid.uf2` (main firmware), `build/detect.uf2` (standalone I2C probe).
@@ -48,7 +48,8 @@ cp build/pwmvid.uf2 /media/$USER/RP2350/
 
 `firmware/board.h` is the single source of truth for the pin map: every `PIN_*`
 macro and `NVVDD_ADC_CH` is derived there and range-checked at compile time for the
-selected family. The default build enables the NVVDD ADC (`NVVDD_ADC=ON`).
+selected family. The NVVDD ADC is part of the debug build (`DEBUG=ON`); the
+default build has no ADC.
 
 **Before relying on a fresh build for a glitch campaign, flash it and confirm the
 host client still gets `MATCH` from the unlock and a sane `glitch done` line.**
@@ -69,26 +70,18 @@ A minimal rig is **GP0/GP1 + GP22**. GP42 only feeds the NVVDD trace and the `v`
 readout; it never gates an attempt, and the stock-path hand-back is done over PMBus
 (`E1 = 0xC2EA`), not GP15.
 
-### Optional NVVDD ADC (`-DNVVDD_ADC=OFF`)
+### NVVDD ADC (debug build only)
 
-The NVVDD ADC is on by default. Build it out when GP42 is unwired so nothing samples
-a floating pin:
+The NVVDD ADC is compiled in only with `-DDEBUG=ON` (which also enables the
+400 MHz overclock). The normal build compiles out the DMA capture, trace buffer
+and `v` readout — nothing samples a floating pin:
 
-```sh
-cmake -S firmware -B build-noadc -DPICO_BOARD=pico2_w -DNVVDD_ADC=OFF -G Ninja
-ninja -C build-noadc
-```
-
-`NVVDD_ADC=OFF` compiles out the DMA capture, trace buffer and `v` readout:
-
-| | ADC on (default) | `NVVDD_ADC=OFF` |
+| | debug (`-DDEBUG=ON`) | normal (default) |
 |---|---|---|
-| `.text` | 74828 B | 72116 B |
-| `.bss` | 54336 B | 5172 B |
-| banner | `… wiring: I2C + PEX_RST + NVVDD ADC (GP42)` | `… wiring: I2C + PEX_RST (no ADC)` |
-| `v` | `nvvdd=<v> V  sample_ns=<f>` | `nvvdd=N/A` |
+| banner | `… wiring: I2C + PEX_RST + NVVDD ADC (GP42) [debug build]` | `… wiring: I2C + PEX_RST` |
+| `v` | `clk=<n> MHz  nvvdd=<v> V  sample_ns=<f>  last reset: <…>` | `clk=<n> MHz  last reset: <…>` |
 | `glitch done` | includes `nvvdd=<v>` | `nvvdd` omitted |
-| `y` trace | `trace n=<n> sample_ns=<f>` + samples | `trace: built without NVVDD_ADC` |
+| `y` trace | `trace n=<n> sample_ns=<f>` + samples | `trace: built without DEBUG` |
 
 The glitch itself is byte-for-byte identical; actuation never reads the ADC.
 
