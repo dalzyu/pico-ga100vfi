@@ -1,7 +1,7 @@
 # pico-ga100vfi
 
 Voltage-glitch toolchain for NVIDIA GA100 boards (CMP 170HX), inspired by
-[`kate-land/ga100vfi`](https://github.com/kate-land/ga100vfi) on generic
+[`kate-land/ga100vfi`](https://github.com/kate-land/ga100vfi), on generic
 RP2350A / RP2350B boards using an I2C-only actuation path.
 
 Credits:
