@@ -285,3 +285,9 @@ do not consider this advice.
 Use at your own risk. I am not responsible for bricked cards, toasted VRMs, dead
 boards, thermonuclear war, or anything else that happens from using this tool. You
 are choosing to modify your own hardware.
+
+## Support
+
+If this project helped you, you may donate through here if you'd like:
+
+<a href="https://buymeacoffee.com/dalzy"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" width="220"></a>
